@@ -79,15 +79,14 @@
 
 							var args = Array.apply(null, arguments);
 
-							if (arguments.length > 2 && typeof args[args.length - 1] === "function") {
+							if (arguments.length > 3 && typeof args[args.length - 1] === "function") {
 								item.refreshFunc = args.pop();
 							}
 
 							if (arguments.length > 2 && typeof args[args.length - 1] === "number") {
 								item.expires = args.pop();
 							} else {
-								// default to 1 day
-								item.expires = 1000 * 60 * 60 * 24;
+								throw "No expiration time given";
 							}
 
 							item.item = args[args.length - 1];
