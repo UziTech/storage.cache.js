@@ -11,35 +11,70 @@
 	if (storage.cache && !(delete storage.cache)) {
 		throw "Cannot redefine storage.cache";
 	}
+	if (storage.session.cache && !(delete storage.session.cache)) {
+		throw "Cannot redefine storage.session.cache";
+	}
 
 	function addCache(storage) {
 
-		storage.converters.cache = {
+		storage._.converters.cache = {
 			// storage.cache
 			matchJSONValue: function (obj) {
-				return obj && obj.hasOwnProperty("$cache") && Object.keys(obj).length === 1 && obj.$cache.hasOwnProperty("expires") && obj.$cache.hasOwnProperty("item") && obj.$cache.hasOwnProperty("time") && obj.$cache.hasOwnProperty("refresh") && Object.keys(obj.$cache).length === 4;
+				return obj && obj.hasOwnProperty("$cache") && Object.keys(obj).length === 1 && obj.$cache.hasOwnProperty("expires") && obj.$cache.hasOwnProperty("value") && obj.$cache.hasOwnProperty("time") && obj.$cache.hasOwnProperty("refresh") && Object.keys(obj.$cache).length === 4;
 			},
 			matchObject: function (obj) {
-				return obj.hasOwnProperty("expires") && obj.hasOwnProperty("item") && obj.hasOwnProperty("time") && obj.hasOwnProperty("refresh") && Object.keys(obj).length === 4;
+				return obj && obj.hasOwnProperty("expires") && obj.hasOwnProperty("value") && obj.hasOwnProperty("time") && obj.hasOwnProperty("refresh") && Object.keys(obj).length === 4;
 			},
 			toJSONValue: function (obj) {
 				return {
 					$cache: {
-						expires: storage.stringify(obj.expires),
-						item: storage.stringify(obj.item),
-						time: storage.stringify(obj.time),
-						refresh: storage.stringify(obj.refresh),
+						expires: storage._.stringify(obj.expires),
+						value: storage._.stringify(obj.value),
+						time: storage._.stringify(obj.time),
+						refresh: storage._.stringify(obj.refresh),
 					}
 				};
 			},
 			fromJSONValue: function (obj) {
-				// console.log("caller", storage.converters.cache.fromJSONValue.caller.caller.caller.caller);
+				// console.log("caller", storage._.converters.cache.fromJSONValue.caller.caller.caller.caller);
 				return {
-					expires: storage.parse(obj.$cache.expires),
-					item: storage.parse(obj.$cache.item),
-					time: storage.parse(obj.$cache.time),
-					refresh: storage.parse(obj.$cache.refresh),
+					expires: storage._.parse(obj.$cache.expires),
+					value: storage._.parse(obj.$cache.value),
+					time: storage._.parse(obj.$cache.time),
+					refresh: storage._.parse(obj.$cache.refresh),
 				};
+			},
+			valueFromObject: function (obj, args, callback) {
+				var now = new Date().getTime();
+				var expired = (obj.expires instanceof Date ? now > obj.expires.getTime() : now > obj.time + obj.expires);
+
+				if (expired) {
+					if (!args) {
+						return;
+					}
+					if (obj.refresh) {
+						if (callback) {
+							return obj.refresh(obj.value, function (value) {
+								obj.value = value;
+								obj.time = new Date().getTime();
+								storage.setItem(args, obj);
+								callback(obj.value);
+							});
+						}
+						obj.value = obj.refresh(obj.value);
+						obj.time = new Date().getTime();
+						storage.setItem(args, obj);
+						return obj.value;
+					}
+					if (callback) {
+						return callback();
+					}
+					return;
+				}
+				if (callback) {
+					callback(obj.value);
+				}
+				return obj.value;
 			}
 		};
 
@@ -47,90 +82,85 @@
 			cache: {
 				get: function () {
 					return {
-						getItem: function () {
-							var args = Array.apply(null, arguments);
+						getItem: function (item, callback) {
+							var args;
+							if (item instanceof Array) {
+								args = item;
 
-							var callback = null;
-							if (typeof args[args.length - 1] === "function") {
-								callback = args.pop();
+								if (typeof callback !== "function") {
+									callback = null;
+								}
+							} else {
+								args = Array.apply(null, arguments);
+
+								if (typeof args[args.length - 1] === "function") {
+									callback = args.pop();
+								} else {
+									callback = null;
+								}
 							}
 
-							var item = storage.getItem.apply(storage, args);
+							var item = storage._.getRawItem(args);
 
-							if (typeof item === "undefined") {
-								if (callback) {
-									callback();
+							if (storage._.converters.cache.matchObject(item)) {
+								return storage._.converters.cache.valueFromObject(item, args, callback);
+							}
+
+							if (args.length === 1) {
+								return item;
+							}
+							var prop = args.pop();
+							var ret;
+							if (callback) {
+								args.push(function (item) {
+									callback(item[prop]);
+								});
+								ret = storage.cache.getItem(args);
+								if (ret) {
+									return ret[prop];
 								}
 								return;
-							} else if (storage.converters.cache.matchObject(item)) {
-								var now = new Date().getTime();
-								var expired = true;
-								if (item.expires instanceof Date) {
-									expired = now > item.expires.getTime();
-								} else {
-									expired = now - item.time > item.expires;
-								}
-
-								if (expired) {
-									if (item.refresh) {
-										if (callback) {
-											return item.refresh(item.item, function (newItem) {
-												item.item = newItem;
-												item.time = new Date().getTime();
-												args.push(item);
-												storage.setItem.apply(storage, args);
-												callback(item.item);
-											});
-										}
-										item.item = item.refresh(item.item);
-										item.time = new Date().getTime();
-										args.push(item);
-										storage.setItem.apply(storage, args);
-										return item.item;
-									}
-									if (callback) {
-										callback();
-									}
-									return;
-								} else {
-									if (callback) {
-										callback(item.item);
-									} else {
-										return item.item;
-									}
-								}
-							} else {
-								throw "Not a cached object";
 							}
+							ret = storage.cache.getItem(args);
+							if (ret) {
+								return ret[prop];
+							}
+							return;
 						},
-						setItem: function () {
-							if (arguments.length < 2) {
-								throw "No value given";
-							}
-
-							var item = {
-								item: null,
-								time: new Date().getTime(),
-								expires: null,
-								refresh: null,
-							};
-
+						setItem: function (options, item, value) {
 							var args = Array.apply(null, arguments);
 
-							if (arguments.length > 3 && typeof args[args.length - 1] === "function") {
-								item.refresh = args.pop();
-							}
-
-							if (arguments.length > 2 && (typeof args[args.length - 1] === "number" || args[args.length - 1] instanceof Date)) {
-								item.expires = args.pop();
+							if (typeof options === "object") {
+								args.shift();
 							} else {
-								throw "No expiration time given";
+								options = {};
+							}
+							options.time = new Date().getTime();
+							value = args.pop();
+
+							if (args[0] instanceof Array) {
+								args = args[0];
 							}
 
-							item.item = args[args.length - 1];
-							args[args.length - 1] = item;
+							var obj = storage._.getRawItem(args);
+							if (!storage._.converters.cache.matchObject(obj)) {
+								obj = {};
+							}
 
-							return storage.setItem.apply(storage, args);
+							if (options.hasOwnProperty("refresh") && typeof options.refresh === "function") {
+								obj.refresh = options.refresh;
+							} else if (!obj.hasOwnProperty("refresh") || typeof obj.refresh !== "function") {
+								obj.refresh = null;
+							}
+							if (options.hasOwnProperty("expires") && (typeof options.expires === "number" || options.expires instanceof Date)) {
+								obj.expires = options.expires;
+							} else if (!obj.hasOwnProperty("expires") || (typeof obj.expires !== "number" && !(obj.expires instanceof Date))) {
+								obj.expires = 0;
+							}
+							obj.time = new Date().getTime();
+							obj.value = value;
+
+							return storage.setItem(args, obj);
 						}
 					};
 				}
